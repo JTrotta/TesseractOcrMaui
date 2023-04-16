@@ -8,8 +8,6 @@ namespace TesseractOcrMaui;
 /// <summary>
 /// High-level functionality with Tesseract ocr. Default implementation for ITesseract interface.
 /// </summary>
-[UnsupportedOSPlatform("MACCATALYST")]
-[UnsupportedOSPlatform("IOS")]
 public class Tesseract : ITesseract
 {
     /// <summary>
@@ -67,17 +65,27 @@ public class Tesseract : ITesseract
     }
 
     /// <inheritdoc/>
-    public RecognizionResult RecognizeText(string imagePath)
+    public RecognizionResult RecognizeText(string imagePath, bool useGrayScale = false, float rotationDegree = 0)
     {
         Logger.LogInformation("Tesseract, recognize image '{path}'.", imagePath);
         
         var tessData = TessDataProvider.TessDataFolder;
         var languages = TessDataProvider.GetAllFileNames();
-        return Recognize(tessData, languages, imagePath);
+        return Recognize(tessData, languages, imagePath, useGrayScale, rotationDegree);
     }
 
     /// <inheritdoc/>
-    public async Task<RecognizionResult> RecognizeTextAsync(string imagePath)
+    public RecognizionResult RecognizeText(byte[] imageArray, bool useGrayScale = false, float rotationDegree = 0)
+    {
+        Logger.LogInformation("Tesseract, recognize imageArray.");
+
+        var tessData = TessDataProvider.TessDataFolder;
+        var languages = TessDataProvider.GetAllFileNames();
+        return Recognize(tessData, languages, imageArray, useGrayScale, rotationDegree );
+    }
+
+    /// <inheritdoc/>
+    public async Task<RecognizionResult> RecognizeTextAsync(string imagePath, bool useGrayScale = false, float rotationDegree = 0)
     {
         Logger.LogInformation("Tesseract, recognize image '{path}' async.", imagePath);
 
@@ -98,7 +106,62 @@ public class Tesseract : ITesseract
         
         var tessData = TessDataProvider.TessDataFolder;
         var languages = TessDataProvider.AvailableLanguages;
-        return await Task.Run(() => Recognize(tessData, languages, imagePath));
+        return await Task.Run(() => Recognize(tessData, languages, imagePath, useGrayScale, rotationDegree));
+    }
+
+    /// <inheritdoc/>
+    public async Task<RecognizionResult> RecognizeTextAsync(byte[] imageArray, bool useGrayScale = false, float rotationDegree = 0)
+    {
+        Logger.LogInformation("Tesseract, recognize image  async.");
+
+        // Load traineddata if all files not loaded yet.
+        if (TessDataProvider.IsAllDataLoaded is false)
+        {
+            var loadResult = await LoadTraineddataAsync();
+            if (loadResult.NotSuccess())
+            {
+                return new RecognizionResult
+                {
+                    Status = RecognizionStatus.CannotLoadTessData,
+                    Message = $"Failed to load '{loadResult.GetErrorCount()}' traineddata files. " +
+                        $"Errors: '{loadResult.GetErrorsString()}'"
+                };
+            }
+        }
+
+        var tessData = TessDataProvider.TessDataFolder;
+        var languages = TessDataProvider.AvailableLanguages;
+        return await Task.Run(() => Recognize(tessData, languages, imageArray, useGrayScale, rotationDegree));
+    }
+
+    internal RecognizionResult Recognize(string tessDataFolder, string[] traineddataFileNames, string imagePath, bool useGrayScale, float rotationDegree)
+    {
+        using var image = Pix.LoadFromFile(imagePath);
+        TransformImage(image, useGrayScale, rotationDegree);
+        return Recognize(tessDataFolder, traineddataFileNames, image);
+    }
+
+    /// <summary>
+    /// Prepare Pix image to be recogined by Tesseract
+    /// </summary>
+    /// <param name="tessDataFolder"></param>
+    /// <param name="traineddataFileNames"></param>
+    /// <param name="imageArray"></param>
+    /// <param name="rotationDegree"></param>
+    /// <returns></returns>
+    internal RecognizionResult Recognize(string tessDataFolder, string[] traineddataFileNames, byte[] imageArray, bool useGrayScale, float rotationDegree)
+    {
+        using var image = Pix.LoadFromMemory(imageArray);
+        TransformImage(image, useGrayScale, rotationDegree);
+        return Recognize(tessDataFolder, traineddataFileNames, image);
+    }
+
+    internal void TransformImage(Pix image, bool useGrayScale = false, float rotationDegree = 0)
+    {
+        float rotation = (float)((Math.PI / 180) * rotationDegree);
+        image = image.Rotate(rotation);
+        if (useGrayScale)
+            image = image.ConvertRGBToGray();
     }
 
     /// <summary>
@@ -106,10 +169,10 @@ public class Tesseract : ITesseract
     /// </summary>
     /// <param name="tessDataFolder">Path to folder containing traineddata files.</param>
     /// <param name="traineddataFileNames">Array of traineddata file names, which include .traineddata extension.</param>
-    /// <param name="imagePath">Path to image to be recognized with file name and extension.</param>
+    /// <param name="image">Pix Image to be recognized.</param>
     /// <returns>RecognizionResult, information about recognizion status</returns>
     /// <exception cref="DllNotFoundException">If tesseract or any other library is not found.</exception>
-    internal RecognizionResult Recognize(string tessDataFolder, string[] traineddataFileNames, string imagePath)
+    internal RecognizionResult Recognize(string tessDataFolder, string[] traineddataFileNames, Pix image)
     {
         var (languages, langParseResult) = TrainedDataToLanguage(tessDataFolder, traineddataFileNames);
         if (string.IsNullOrWhiteSpace(languages))
@@ -120,13 +183,13 @@ public class Tesseract : ITesseract
                     Status = RecognizionStatus.NoLanguagesAvailable
                 });
         }
-        if (File.Exists(imagePath) is false)
+        if (image == null)
         {
-            Logger.LogWarning("Cannot recognize text in '{path}', file does not exist.", imagePath);
+            Logger.LogWarning("Cannot recognize text. Image is empty.");
             return new RecognizionResult
             {
                 Status = RecognizionStatus.ImageNotFound,
-                Message = "Image does not exist."
+                Message = "Image is empty"
             };
         }
         if (string.IsNullOrWhiteSpace(tessDataFolder))
@@ -139,7 +202,7 @@ public class Tesseract : ITesseract
             };
         }
 
-        Logger.LogInformation("Recognize image at '{path}'", imagePath);
+        Logger.LogInformation("Recognize image");
 
         string? text = null;
         float confidence = -1f;
@@ -149,7 +212,6 @@ public class Tesseract : ITesseract
         {
             // nulls are alredy checked, can't throw.
             using var engine = new TessEngine(languages, tessDataFolder, Logger);
-            using var image = Pix.LoadFromFile(imagePath);
 
             // image can't be null here
             using var page = engine.ProcessImage(image);
@@ -165,7 +227,7 @@ public class Tesseract : ITesseract
             return new()
             {
                 Status = RecognizionStatus.ImageNotFound,
-                Message = $"Image cannot be loaded from '{imagePath}'."
+                Message = $"Image cannot be processed."
             };
         }
         catch (ArgumentException)

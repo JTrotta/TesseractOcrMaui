@@ -6,11 +6,12 @@ internal sealed partial class LeptonicaApi
 {
 #if WINDOWS
     const string DllName = @"leptonica-1.84.0.dll";
-
 #elif ANDROID21_0_OR_GREATER
     const string DllName = "libleptonica";
+#elif IOS11_0_OR_GREATER
+    const string DllName = "libleptonica";
 #else
-    const string DllName = "Use Windows or Android Platform";
+    const string DllName = "Use Windows, iOS or Android Platform";
 #endif
 
 

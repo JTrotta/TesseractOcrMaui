@@ -11,8 +11,10 @@ internal sealed partial class TesseractApi
     const string DllName = @"tesseract53.dll";
 #elif ANDROID21_0_OR_GREATER
     const string DllName = "libtesseract";
+#elif IOS11_0_OR_GREATER
+    const string DllName = "libtesseract";
 #else
-    const string DllName = "Use Windows or Android Platform";
+    const string DllName = "Use Windows, iOS or Android Platform";
 #endif
 
 
